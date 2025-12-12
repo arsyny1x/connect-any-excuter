@@ -1,42 +1,58 @@
-local Services							= setmetatable({}, { __index = function(Self, Key) return game.GetService(game, Key) end })
-local Client							= Services.Players.LocalPlayer
-local SMethod							= (WebSocket and WebSocket.connect)
+Services = setmetatable({}, { __index = function(Self, Key) return game:GetService(Key) end })
+local Client = Services.Players.LocalPlayer
+local SMethod = (WebSocket and WebSocket.connect)
 
-local Main							= function()
-	local Success, WebSocket				= pcall(SMethod, "ws://localhost:9000/")
-    	local Closed						= false
+if not SMethod then return Client:Kick("Executor is too shitty.") end
 
-	if not Success then return end
+local Main = function()
+    local Success, WebSocket = pcall(SMethod, "ws://localhost:9000/")
+    if not Success or not WebSocket then 
+        return -- ถ้าต่อไม่ได้ ออกเลย ไม่ค้าง
+    end
 
-	WebSocket:Send(Services.HttpService:JSONEncode({
-		Method						= "Authorization",
-		Name						= Client.Name
-	}))
+    local Closed = false
+    local StartTime = tick()
+    local Timeout = 3 -- ปรับได้ตามต้องการ
 
-	WebSocket.OnMessage:Connect(function(Unparsed)
-		local Parsed					= Services.HttpService:JSONDecode(Unparsed)
-		
-		if (Parsed.Method == "Execute") then
-			local Function, Error			= loadstring(Parsed.Data)
+    -- Authorization
+    WebSocket:Send(Services.HttpService:JSONEncode({
+        Method = "Authorization",
+        Name = Client.Name
+    }))
 
-			if Error then return WebSocket:Send(Services.HttpService:JSONEncode({
-				Method				= "Error",
-				Message				= Error
-			}))	end
-			
-			Function()
-		end
-	end)
+    WebSocket.OnMessage:Connect(function(Unparsed)
+        local Parsed = Services.HttpService:JSONDecode(Unparsed)
 
-    WebSocket.OnClose:Connect(function()
-        Closed							= true
+        if Parsed.Method == "Execute" then
+            local Function, Error = loadstring(Parsed.Data)
+
+            if Error then 
+                WebSocket:Send(Services.HttpService:JSONEncode({
+                    Method = "Error",
+                    Message = Error
+                }))
+                return
+            end
+            
+            Function()
+        end
     end)
 
-    repeat wait() until Closed
+    -- เมื่อปิด
+    WebSocket.OnClose:Connect(function()
+        Closed = true
+    end)
+
+    -- ไม่ค้าง เพราะมี timeout
+    while not Closed do
+        if tick() - StartTime > Timeout then
+            break -- ออกเมื่อครบเวลา
+        end
+        task.wait()
+    end
 end
 
-while wait(1) do
-	local Success, Error					= pcall(Main)
-
-	if not Success then print(Error) end
+while task.wait(1) do
+    local Success, Error = pcall(Main)
+    if not Success then print(Error) end
 end
