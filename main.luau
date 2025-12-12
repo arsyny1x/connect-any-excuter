@@ -7,14 +7,13 @@ if not SMethod then return Client:Kick("Executor is too shitty.") end
 local Main = function()
     local Success, WebSocket = pcall(SMethod, "ws://localhost:9000/")
     if not Success or not WebSocket then 
-        return -- ถ้าต่อไม่ได้ ออกเลย ไม่ค้าง
+        return 
     end
 
     local Closed = false
     local StartTime = tick()
-    local Timeout = 3 -- ปรับได้ตามต้องการ
+    local Timeout = 3 
 
-    -- Authorization
     WebSocket:Send(Services.HttpService:JSONEncode({
         Method = "Authorization",
         Name = Client.Name
@@ -37,16 +36,14 @@ local Main = function()
             Function()
         end
     end)
-
-    -- เมื่อปิด
+    
     WebSocket.OnClose:Connect(function()
         Closed = true
     end)
 
-    -- ไม่ค้าง เพราะมี timeout
     while not Closed do
         if tick() - StartTime > Timeout then
-            break -- ออกเมื่อครบเวลา
+            break 
         end
         task.wait()
     end
