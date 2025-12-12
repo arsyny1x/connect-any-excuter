@@ -1,55 +1,89 @@
-Services = setmetatable({}, { __index = function(Self, Key) return game:GetService(Key) end })
+-- // Services Shortcut
+local Services = setmetatable({}, {
+    __index = function(_, Key)
+        return game:GetService(Key)
+    end
+})
+
 local Client = Services.Players.LocalPlayer
 local SMethod = (WebSocket and WebSocket.connect)
 
-if not SMethod then return Client:Kick("Executor is too shitty.") end
+-- // Executor Check
+if not SMethod then
+    return Client:Kick("Executor is too shitty.")
+end
 
-local Main = function()
-    local Success, WebSocket = pcall(SMethod, "ws://localhost:9000/")
-    if not Success or not WebSocket then 
-        return 
+-- // Check if local server is up
+local function is_server_up()
+    local success, err = pcall(
+        Services.HttpService.GetAsync,
+        Services.HttpService,
+        "http://localhost:9000/"
+    )
+
+    if success then
+        return true
+    end
+
+    if err:find("ConnectFail") then
+        return false
+    end
+
+    -- Port open but wrong protocol/other error
+    return true
+end
+
+-- // Main Loop
+local function Main()
+    if not is_server_up() then
+        return
+    end
+
+    local success, WebSocket = pcall(SMethod, "ws://localhost:9000/")
+    if not success then
+        return
     end
 
     local Closed = false
-    local StartTime = tick()
-    local Timeout = 3 
 
+    -- // Identify client
     WebSocket:Send(Services.HttpService:JSONEncode({
         Method = "Authorization",
         Name = Client.Name
     }))
 
-    WebSocket.OnMessage:Connect(function(Unparsed)
-        local Parsed = Services.HttpService:JSONDecode(Unparsed)
+    -- // Receive Messages
+    WebSocket.OnMessage:Connect(function(raw)
+        local Parsed = Services.HttpService:JSONDecode(raw)
 
         if Parsed.Method == "Execute" then
-            local Function, Error = loadstring(Parsed.Data)
+            local func, err = loadstring(Parsed.Data)
 
-            if Error then 
-                WebSocket:Send(Services.HttpService:JSONEncode({
+            if err then
+                return WebSocket:Send(Services.HttpService:JSONEncode({
                     Method = "Error",
-                    Message = Error
+                    Message = err
                 }))
-                return
             end
-            
-            Function()
+
+            func()
         end
     end)
-    
+
+    -- // Detect Close
     WebSocket.OnClose:Connect(function()
         Closed = true
     end)
 
-    while not Closed do
-        if tick() - StartTime > Timeout then
-            break 
-        end
+    repeat
         task.wait()
-    end
+    until Closed
 end
 
+-- // Retry Loop
 while task.wait(1) do
-    local Success, Error = pcall(Main)
-    if not Success then print(Error) end
+    local ok, err = pcall(Main)
+    if not ok then
+        warn(err)
+    end
 end
