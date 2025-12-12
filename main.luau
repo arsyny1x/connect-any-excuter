@@ -1,89 +1,72 @@
--- // Services Shortcut
-local Services = setmetatable({}, {
-    __index = function(_, Key)
-        return game:GetService(Key)
-    end
-})
-
+Services = setmetatable({}, { __index = function(_, Key) return game:GetService(Key) end })
 local Client = Services.Players.LocalPlayer
 local SMethod = (WebSocket and WebSocket.connect)
 
--- // Executor Check
-if not SMethod then
-    return Client:Kick("Executor is too shitty.")
+-- Abort if the executor does not support WebSocket
+if not SMethod then 
+    return Client:Kick("Executor does not support required WebSocket features.")
 end
 
--- // Check if local server is up
-local function is_server_up()
-    local success, err = pcall(
-        Services.HttpService.GetAsync,
-        Services.HttpService,
-        "http://localhost:9000/"
-    )
-
-    if success then
-        return true
-    end
-
-    if err:find("ConnectFail") then
-        return false
-    end
-
-    -- Port open but wrong protocol/other error
-    return true
-end
-
--- // Main Loop
 local function Main()
-    if not is_server_up() then
-        return
-    end
-
-    local success, WebSocket = pcall(SMethod, "ws://localhost:9000/")
-    if not success then
-        return
+    -- Try to connect to the local WebSocket server
+    local Success, WebSocket = pcall(SMethod, "ws://localhost:9000/")
+    
+    -- If connection fails, exit immediately to avoid freezing
+    if not Success or not WebSocket then 
+        return 
     end
 
     local Closed = false
+    local StartTime = tick()
+    local Timeout = 3  -- Prevent infinite waiting if server never closes the connection
 
-    -- // Identify client
+    -- Send authorization packet
     WebSocket:Send(Services.HttpService:JSONEncode({
         Method = "Authorization",
         Name = Client.Name
     }))
 
-    -- // Receive Messages
-    WebSocket.OnMessage:Connect(function(raw)
-        local Parsed = Services.HttpService:JSONDecode(raw)
+    -- Listen for incoming messages
+    WebSocket.OnMessage:Connect(function(Unparsed)
+        local Parsed = Services.HttpService:JSONDecode(Unparsed)
 
         if Parsed.Method == "Execute" then
-            local func, err = loadstring(Parsed.Data)
+            local Function, ErrorMsg = loadstring(Parsed.Data)
 
-            if err then
-                return WebSocket:Send(Services.HttpService:JSONEncode({
+            -- Return error to server if the compilation failed
+            if ErrorMsg then
+                WebSocket:Send(Services.HttpService:JSONEncode({
                     Method = "Error",
-                    Message = err
+                    Message = ErrorMsg
                 }))
+                return
             end
-
-            func()
+            
+            -- Execute received code
+            Function()
         end
     end)
 
-    -- // Detect Close
+    -- Detect disconnection
     WebSocket.OnClose:Connect(function()
         Closed = true
     end)
 
-    repeat
+    -- Wait for disconnection or timeout
+    while not Closed do
+        if tick() - StartTime > Timeout then
+            break  -- Prevent the game from freezing if VS Code server is not running
+        end
         task.wait()
-    until Closed
+    end
 end
 
--- // Retry Loop
-while task.wait(1) do
-    local ok, err = pcall(Main)
-    if not ok then
-        warn(err)
+-- Retry connection every 5 seconds (to prevent lag spikes)
+local retryDelay = 5
+
+while task.wait(retryDelay) do
+    local Success, ErrorMsg = pcall(Main)
+    if not Success then
+        warn("WebSocket reconnect failed:", ErrorMsg)
     end
 end
